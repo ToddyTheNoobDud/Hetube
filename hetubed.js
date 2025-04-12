@@ -65,16 +65,13 @@ class Hetubed extends EventEmitter {
       ...options
     };
     
-    // Initialize plugins with improved loading
     this.plugins = [];
     if (Array.isArray(this.options.plugins)) {
       this.options.plugins.forEach(this.addPlugin.bind(this));
     }
     
-    // Set up optimized event handlers
     this._initEventHandlers();
     
-    // Cleanup function for preventing memory leaks
     this._boundCleanup = this._cleanup.bind(this);
     process.on('SIGINT', this._boundCleanup);
     process.on('SIGTERM', this._boundCleanup);
@@ -111,13 +108,11 @@ class Hetubed extends EventEmitter {
     const guildId = voiceChannel.guild.id;
     let queue = this.queues.get(guildId);
     
-    // Create queue if doesn't exist
     if (!queue) {
       queue = this._createQueue(voiceChannel, options);
     }
     
     try {
-      // Handle song input - optimized resolution
       if (typeof song === 'string') {
         const songInfo = await this._resolveSong(song);
         await queue.addSong(songInfo, options.member || null);
@@ -125,7 +120,6 @@ class Hetubed extends EventEmitter {
         await queue.addSong(song, options.member || null);
       }
       
-      // Start playing if not already
       if (!queue.playing && !queue.paused) {
         await queue.play();
       }
@@ -174,19 +168,16 @@ class Hetubed extends EventEmitter {
    * @private
    */
   async _resolveSong(song) {
-    // Check if it's a valid YouTube URL - most efficient first
     if (ytdl.validateURL(song)) {
       const info = await ytdl.getInfo(song);
       return this._createSong(info);
     }
     
-    // Check if it's a YouTube playlist
     if (ytpl.validateID(song)) {
       const playlist = await ytpl(song, { limit: 100 });
       return playlist.items.map(item => this._createSong(item));
     }
     
-    // Search for the song as last resort (most resource intensive)
     const searchResults = await ytsr(song, { limit: 1 });
     if (!searchResults.items.length) {
       throw new Error('No search results found.');
@@ -203,9 +194,7 @@ class Hetubed extends EventEmitter {
    * @private
    */
   _createSong(info) {
-    // Extract only needed fields to reduce memory usage
     if (info.videoDetails) {
-      // Return from ytdl.getInfo() format
       const thumbnails = info.videoDetails.thumbnails;
       return {
         id: info.videoDetails.videoId,
@@ -217,7 +206,6 @@ class Hetubed extends EventEmitter {
         source: 'youtube'
       };
     } else {
-      // Return from ytpl format
       const thumbnails = info.thumbnails;
       return {
         id: info.id,
@@ -236,12 +224,10 @@ class Hetubed extends EventEmitter {
    * @private
    */
   _initEventHandlers() {
-    // Use a single handler for voice state updates
     this.client.on('voiceStateUpdate', (oldState, newState) => {
       const queue = this.getQueue(oldState.guild.id);
       if (!queue) return;
       
-      // Handle bot disconnection
       if (oldState.member.id === this.client.user.id && !newState.channelId) {
         queue.stop();
         this.queues.delete(oldState.guild.id);
@@ -249,18 +235,14 @@ class Hetubed extends EventEmitter {
         return;
       }
       
-      // Handle empty channel - only check if needed
       if (this.options.leaveOnEmpty && 
           queue.voiceChannel.id === oldState.channelId &&
           oldState.channel) {
         
-        // Optimized check - only filter once and cache result
         const members = oldState.channel.members.filter(m => !m.user.bot);
         
         if (members.size === 0) {
-          // Use a timeout handler to avoid unnecessary interval
           queue._emptyTimeout = setTimeout(() => {
-            // Make sure the queue still exists
             if (!this.queues.has(oldState.guild.id)) return;
             
             const currentChannel = queue.voiceChannel.members;
@@ -271,7 +253,6 @@ class Hetubed extends EventEmitter {
               this.emit('empty', queue);
             }
             
-            // Clear timeout reference
             queue._emptyTimeout = null;
           }, this.options.emptyCooldown * 1000);
         }
@@ -284,7 +265,6 @@ class Hetubed extends EventEmitter {
    * @private
    */
   _cleanup() {
-    // Destroy all connections and clear the queue collection
     for (const [guildId, queue] of this.queues.entries()) {
       if (queue.connection) {
         queue.connection.destroy();
@@ -297,7 +277,6 @@ class Hetubed extends EventEmitter {
       this.queues.delete(guildId);
     }
     
-    // Remove process listeners
     process.off('SIGINT', this._boundCleanup);
     process.off('SIGTERM', this._boundCleanup);
   }
@@ -429,7 +408,6 @@ class Queue extends EventEmitter {
      */
     this._transcoder = null;
     
-    // Set up player event handlers
     this._initPlayerEvents();
   }
   
@@ -452,23 +430,6 @@ class Queue extends EventEmitter {
   }
   
   /**
-   * Send a message to the text channel if it exists
-   * @param {string|MessageOptions} content Message content or options
-   * @returns {Promise<Message|null>}
-   * @private
-   */
-  async _sendTextChannelMessage(content) {
-    if (!this.textChannel) return null;
-    
-    try {
-      return await this.textChannel.send(content);
-    } catch (error) {
-      this.hetubed.emit('error', this, error);
-      return null;
-    }
-  }
-  
-  /**
    * Connect to the voice channel with optimized error handling
    * @returns {VoiceConnection}
    */
@@ -479,10 +440,9 @@ class Queue extends EventEmitter {
       channelId: this.voiceChannel.id,
       guildId: this.guildId,
       adapterCreator: this.voiceChannel.guild.voiceAdapterCreator,
-      selfDeaf: true, // Self deafen for bandwidth optimization
+      selfDeaf: true,
     });
     
-    // Handle connection status changes
     this.connection.on(VoiceConnectionStatus.Disconnected, async () => {
       try {
         // Try to reconnect once
@@ -493,13 +453,10 @@ class Queue extends EventEmitter {
           )
         ]);
       } catch (error) {
-        // On failure, destroy connection and remove the queue
         this.connection.destroy();
         this.hetubed.queues.delete(this.guildId);
         this.hetubed.emit('disconnect', this);
         
-        // Notify in text channel if available
-        this._sendTextChannelMessage('⚠️ Disconnected from voice channel due to network issues.');
       }
     });
     
@@ -515,19 +472,13 @@ class Queue extends EventEmitter {
    * @returns {Promise<Queue>}
    */
   async addSong(song, member = null) {
-    // Handle array of songs (playlist)
     if (Array.isArray(song)) {
-      // Map songs in one operation to avoid multiple array operations
       const songs = song.map(s => ({...s, member}));
       this.songs.push(...songs);
       
       if (this.hetubed.options.emitAddListWhenCreatingQueue || this.songs.length > songs.length) {
         this.hetubed.emit('addList', this, songs);
         
-        // Notify in text channel if available
-        if (songs.length > 0) {
-          this._sendTextChannelMessage(`🎵 **${member?.displayName || 'Someone'}** added **${songs.length} songs** to the queue from a playlist.`);
-        }
       }
       
       return this;
@@ -540,8 +491,6 @@ class Queue extends EventEmitter {
     if (this.hetubed.options.emitAddSongWhenCreatingQueue || this.songs.length > 1) {
       this.hetubed.emit('addSong', this, newSong);
       
-      // Notify in text channel if available
-      this._sendTextChannelMessage(`🎵 **${member?.displayName || 'Someone'}** added **${newSong.title}** to the queue.`);
     }
     
     return this;
@@ -563,44 +512,35 @@ class Queue extends EventEmitter {
     this.paused = false;
     
     try {
-      // Clean up previous stream if exists
       this._cleanupStreams();
       
-      // Use a more robust stream handling approach with prism
       const ytStream = ytdl(song.url, {
         ...this.hetubed.options.ytdlOptions,
-        liveBuffer: 4000, // Increase buffer for live streams
-        begin: Date.now(), // Start from current time for live streams
+        liveBuffer: 4000,
+        begin: Date.now(),
       });
       
       this._currentStream = ytStream;
       
-      // Handle stream errors at stream level
       ytStream.on('error', (error) => {
         this.hetubed.emit('error', this, error);
-        // Skip immediately on stream error
         setTimeout(() => this.player.stop(), 100);
       });
       
-      // Use demuxer and opus encoder for better stability
       const demuxer = new prism.opus.WebmDemuxer();
       this._transcoder = demuxer;
       
-      // Connect the streams
       ytStream.pipe(demuxer);
       
-      // Create audio resource from demuxer output with proper stream type
       const resource = createAudioResource(demuxer, {
         inputType: StreamType.Opus,
         inlineVolume: true,
       });
       
-      // Set volume if needed
       if (resource.volume) {
         resource.volume.setVolume(this.options.volume / 100);
       }
       
-      // Play the audio
       this.player.play(resource);
       if (!this.hetubed.options.emitNewSongOnly || this.currentIndex === 0) {
         this.hetubed.emit('playSong', this, song);
@@ -608,7 +548,6 @@ class Queue extends EventEmitter {
       }
     } catch (error) {
       this.hetubed.emit('error', this, error);
-      // Skip to next song on error after small delay
       setTimeout(() => this.skip(), 300);
     }
   }
@@ -622,7 +561,6 @@ class Queue extends EventEmitter {
       try {
         this._currentStream.destroy();
       } catch (err) {
-        // Ignore destroy errors
       }
       this._currentStream = null;
     }
@@ -631,7 +569,6 @@ class Queue extends EventEmitter {
       try {
         this._transcoder.destroy();
       } catch (err) {
-        // Ignore destroy errors
       }
       this._transcoder = null;
     }
@@ -642,10 +579,8 @@ class Queue extends EventEmitter {
    * @returns {Queue}
    */
   skip() {
-    // Save to previous songs if enabled
     if (this.hetubed.options.savePreviousSongs && this.currentSong) {
       this.previousSongs.push(this.currentSong);
-      // Limit previous songs array size to prevent memory bloat
       if (this.previousSongs.length > this.maxPreviousSongs) {
         this.previousSongs.shift();
       }
@@ -653,7 +588,6 @@ class Queue extends EventEmitter {
     
     this.currentIndex++;
     
-    // Loop queue if repeat mode is enabled
     if (this.currentIndex >= this.songs.length) {
       if (this.options.repeatMode === 2) {
         this.currentIndex = 0;
@@ -667,11 +601,9 @@ class Queue extends EventEmitter {
       }
     }
     
-    // Clean up resources before stopping
     this._cleanupStreams();
     
     try {
-      // Stop the player, triggering the Idle state
       this.player.stop();
     } catch (error) {
       this.hetubed.emit('error', this, error);
@@ -716,7 +648,6 @@ class Queue extends EventEmitter {
     this.playing = false;
     this.paused = false;
     
-    // Clean up resources
     this._cleanupStreams();
     
     if (this._emptyTimeout) {
@@ -749,7 +680,6 @@ class Queue extends EventEmitter {
    * @returns {Queue}
    */
   setVolume(volume) {
-    // Only update if the volume actually changed
     const newVolume = Math.max(0, Math.min(100, volume));
     if (this.options.volume === newVolume) return this;
     
@@ -770,7 +700,6 @@ class Queue extends EventEmitter {
    * @returns {Queue}
    */
   setRepeatMode(mode) {
-    // Only update if the mode actually changed
     if (this.options.repeatMode === mode) return this;
     
     this.options.repeatMode = mode;
@@ -788,10 +717,8 @@ class Queue extends EventEmitter {
       throw new Error('Invalid position');
     }
     
-    // Save current song to previous songs if enabled
     if (this.hetubed.options.savePreviousSongs && this.currentSong) {
       this.previousSongs.push(this.currentSong);
-      // Limit previous songs array
       if (this.previousSongs.length > this.maxPreviousSongs) {
         this.previousSongs.shift();
       }
@@ -799,7 +726,6 @@ class Queue extends EventEmitter {
     
     this.currentIndex = position;
     
-    // Clean up before stopping
     this._cleanupStreams();
     this.player.stop();
     
@@ -812,13 +738,10 @@ class Queue extends EventEmitter {
    */
   _initPlayerEvents() {
     this.player.on(AudioPlayerStatus.Idle, () => {
-      // Song ended
       if (this.playing) {
         if (this.options.repeatMode === 1) {
-          // Repeat the current song
-          setTimeout(() => this.play(), 200); // Small delay to ensure resources are cleaned up
+          setTimeout(() => this.play(), 200);
         } else {
-          // If we just finished the last song and leaveOnFinish is enabled
           if (this.hetubed.options.leaveOnFinish && 
               this.currentIndex === this.songs.length - 1 &&
               this.options.repeatMode !== 2) {
@@ -827,13 +750,11 @@ class Queue extends EventEmitter {
             this.hetubed.queues.delete(this.guildId);
             this.hetubed.emit('finish', this);
           } else {
-            // Move to the next song with small delay
             const hadMoreSongs = this.currentIndex < this.songs.length - 1;
             
             setTimeout(() => {
               this.skip();
-              
-              // If we ran out of songs and we weren't already at the end
+            
               if (!hadMoreSongs && this.songs.length === 0) {
                 this.hetubed.emit('finish', this);
               } else if (this.currentIndex < this.songs.length) {
@@ -845,11 +766,9 @@ class Queue extends EventEmitter {
       }
     });
     
-    // Unified error handler
     this.player.on('error', error => {
       this.hetubed.emit('error', this, error);
       if (this.playing) {
-        // Force cleanup before skipping
         this._cleanupStreams();
         setTimeout(() => this.skip(), 300);
       }
@@ -863,19 +782,15 @@ class Queue extends EventEmitter {
   shuffle() {
     if (this.songs.length <= 1) return this;
     
-    // Keep current song, shuffle the rest
     const currentSong = this.songs[this.currentIndex];
     
-    // Remove current song
     this.songs.splice(this.currentIndex, 1);
     
-    // Fisher-Yates algorithm - more efficient than sort
     for (let i = this.songs.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1));
       [this.songs[i], this.songs[j]] = [this.songs[j], this.songs[i]];
     }
     
-    // Re-insert current song at the beginning
     this.songs.unshift(currentSong);
     this.currentIndex = 0;
     
@@ -889,7 +804,6 @@ class Queue extends EventEmitter {
   destroy() {
     this.stop();
     
-    // Clear all event listeners
     this.removeAllListeners();
     this.player.removeAllListeners();
     
