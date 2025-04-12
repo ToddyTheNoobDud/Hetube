@@ -670,8 +670,12 @@ class Queue extends EventEmitter {
     // Clean up resources before stopping
     this._cleanupStreams();
     
-    // Stop the player, triggering the Idle state
-    this.player.stop();
+    try {
+      // Stop the player, triggering the Idle state
+      this.player.stop();
+    } catch (error) {
+      this.hetubed.emit('error', this, error);
+    }
     
     return this;
   }
